@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { PermissionsAndroid, Platform, StyleSheet, Text, View } from "react-native";
 import {
     mediaDevices,
     MediaStream,
@@ -32,7 +32,39 @@ export default function Broadcaster({ cameraId }: BroadcasterProps) {
 
         let isMounted = true;
 
+        const requestPermissions = async () => {
+            if (Platform.OS === "android") {
+                try {
+                    const granted = await PermissionsAndroid.requestMultiple([
+                        PermissionsAndroid.PERMISSIONS.CAMERA,
+                        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+                    ]);
+
+                    if (
+                        granted["android.permission.CAMERA"] === PermissionsAndroid.RESULTS.GRANTED &&
+                        granted["android.permission.RECORD_AUDIO"] === PermissionsAndroid.RESULTS.GRANTED
+                    ) {
+                        console.log("You can use the camera and mic");
+                        return true;
+                    } else {
+                        console.log("Camera permission denied");
+                        return false;
+                    }
+                } catch (err) {
+                    console.warn(err);
+                    return false;
+                }
+            }
+            return true;
+        };
+
         const startStream = async () => {
+            const hasPermissions = await requestPermissions();
+            if (!hasPermissions) {
+                console.error("Permissions not granted");
+                return;
+            }
+
             try {
                 // Reuse existing stream if possible, or stop old one if needed
                 // For simplicity, we create a new one each time the component mounts/remounts with new ID

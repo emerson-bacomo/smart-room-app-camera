@@ -6,6 +6,7 @@ import "react-native-reanimated";
 import "../global.css";
 
 import { AuthProvider } from "@/context/auth-context";
+import { CameraProvider } from "@/context/camera-context";
 import { ThemeProvider as AppThemeProvider } from "@/context/theme-context";
 import { useAuth } from "@/hooks/use-auth";
 import { useColorScheme } from "@/hooks/use-color-scheme";
@@ -51,11 +52,13 @@ function RootLayoutContent() {
 
     return (
         <ThemeProvider value={colorScheme === "dark" ? DarkTheme : DefaultTheme}>
-            <Stack>
-                <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-                <Stack.Screen name="(auth)/login" options={{ headerShown: false }} />
-                <Stack.Screen name="settings" options={{ title: "Settings" }} />
-            </Stack>
+            <CameraProvider>
+                <Stack>
+                    <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                    <Stack.Screen name="(auth)/login" options={{ headerShown: false }} />
+                    <Stack.Screen name="settings" options={{ title: "Settings" }} />
+                </Stack>
+            </CameraProvider>
             <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
         </ThemeProvider>
     );
