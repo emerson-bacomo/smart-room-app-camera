@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { PermissionsAndroid, Platform, StyleSheet, Text, View } from "react-native";
+import { PermissionsAndroid, Platform, Text, View } from "react-native";
 import {
     mediaDevices,
     MediaStream,
@@ -70,7 +70,9 @@ export default function Broadcaster({ cameraId }: BroadcasterProps) {
                 // For simplicity, we create a new one each time the component mounts/remounts with new ID
                 const stream = (await mediaDevices.getUserMedia({
                     audio: true,
-                    video: true,
+                    video: {
+                        facingMode: "environment",
+                    },
                 })) as MediaStream;
 
                 if (isMounted) {
@@ -143,18 +145,12 @@ export default function Broadcaster({ cameraId }: BroadcasterProps) {
 
             socketRef.current?.disconnect();
         };
-    }, [cameraId, localStream]); // Re-run if cameraId changes (reset webrtc) or localStream changes
+    }, [cameraId]); // Re-run if cameraId changes (reset webrtc)
 
     return (
-        <View style={styles.container}>
-            <Text style={styles.text}>Recording Mode</Text>
-            {localStream && <RTCView streamURL={localStream.toURL()} style={styles.video} mirror={true} objectFit="cover" />}
+        <View className="flex-1 bg-[#222]">
+            <Text className="text-white text-center p-2.5">Recording Mode</Text>
+            {localStream && <RTCView streamURL={localStream.toURL()} style={{ flex: 1 }} mirror={false} objectFit="cover" />}
         </View>
     );
 }
-
-const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: "#222" },
-    text: { color: "white", textAlign: "center", padding: 10 },
-    video: { flex: 1 },
-});
