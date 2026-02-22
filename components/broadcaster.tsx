@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { PermissionsAndroid, Platform, Text, View } from "react-native";
+import { PermissionsAndroid, Platform, View } from "react-native";
 import {
     mediaDevices,
     MediaStream,
@@ -21,15 +21,12 @@ export default function Broadcaster({ cameraId }: BroadcasterProps) {
     // Use a Ref to hold the socket instance
     const socketRef = useRef<Socket | null>(null);
 
-    // Store multiple PeerConnections (key: socketId, value: RTCPeerConnection)
+    const awaitingWatchers = useRef<string[]>([]);
+    const localStreamRef = useRef<MediaStream | null>(null);
     const peerConnections = useRef<Record<string, RTCPeerConnection>>({});
 
+    // 1. Initialize Camera Stream
     useEffect(() => {
-        if (!cameraId) return;
-
-        socketRef.current = io(SIGNALING_URL);
-        socketRef.current.emit("broadcaster", cameraId);
-
         let isMounted = true;
 
         const requestPermissions = async () => {
@@ -39,17 +36,10 @@ export default function Broadcaster({ cameraId }: BroadcasterProps) {
                         PermissionsAndroid.PERMISSIONS.CAMERA,
                         PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
                     ]);
-
-                    if (
+                    return (
                         granted["android.permission.CAMERA"] === PermissionsAndroid.RESULTS.GRANTED &&
                         granted["android.permission.RECORD_AUDIO"] === PermissionsAndroid.RESULTS.GRANTED
-                    ) {
-                        console.log("You can use the camera and mic");
-                        return true;
-                    } else {
-                        console.log("Camera permission denied");
-                        return false;
-                    }
+                    );
                 } catch (err) {
                     console.warn(err);
                     return false;
@@ -66,17 +56,24 @@ export default function Broadcaster({ cameraId }: BroadcasterProps) {
             }
 
             try {
-                // Reuse existing stream if possible, or stop old one if needed
-                // For simplicity, we create a new one each time the component mounts/remounts with new ID
                 const stream = (await mediaDevices.getUserMedia({
                     audio: true,
                     video: {
                         facingMode: "environment",
+                        width: 1280,
+                        height: 720,
+                        frameRate: 30,
                     },
                 })) as MediaStream;
 
                 if (isMounted) {
+                    localStreamRef.current = stream;
                     setLocalStream(stream);
+                    // Process any awaiting watchers
+                    awaitingWatchers.current.forEach((id) => createPeerConnection(id, stream));
+                    awaitingWatchers.current = [];
+                } else {
+                    stream.getTracks().forEach((t) => t.stop());
                 }
             } catch (err) {
                 console.error("Error accessing media", err);
@@ -85,46 +82,76 @@ export default function Broadcaster({ cameraId }: BroadcasterProps) {
 
         startStream();
 
-        // --- Socket Events ---
+        return () => {
+            isMounted = false;
+            if (localStreamRef.current) {
+                localStreamRef.current.getTracks().forEach((t) => t.stop());
+                localStreamRef.current = null;
+            }
+        };
+    }, []); // Run once on mount
 
-        socketRef.current.on("watcher", async (id: string) => {
-            // We only reach here if the server routed a watcher for this cameraId to us
-            if (!localStream) return;
+    const createPeerConnection = async (watcherId: string, stream: MediaStream) => {
+        console.log(`[Broadcaster] Creating PC for watcher: ${watcherId}`);
+        const pc = new RTCPeerConnection(peerConstraints);
+        peerConnections.current[watcherId] = pc;
 
-            const peerConnection = new RTCPeerConnection(peerConstraints);
-            peerConnections.current[id] = peerConnection;
+        // Logging
+        (pc as any).oniceconnectionstatechange = () => {
+            console.log(`[Broadcaster] PC for ${watcherId} ICE State: ${pc.iceConnectionState}`);
+        };
 
-            // Add local tracks to the peer connection
-            localStream.getTracks().forEach((track) => {
-                peerConnection.addTrack(track, localStream);
-            });
+        stream.getTracks().forEach((track) => {
+            console.log(`[Broadcaster] Adding track to PC for ${watcherId}: ${track.kind}`);
+            pc.addTrack(track, stream);
+        });
 
-            // ICE Candidates
-            (peerConnection as any).onicecandidate = (event: RTCPeerConnectionIceEvent) => {
-                if (event.candidate && socketRef.current) {
-                    socketRef.current.emit("candidate", id, event.candidate);
-                }
-            };
+        (pc as any).onicecandidate = (event: any) => {
+            if (event.candidate && socketRef.current) {
+                socketRef.current.emit("candidate", watcherId, event.candidate);
+            }
+        };
 
-            // Create Offer
-            try {
-                const offer = await peerConnection.createOffer({});
-                await peerConnection.setLocalDescription(offer);
-                socketRef.current?.emit("offer", id, peerConnection.localDescription);
-            } catch (e) {
-                console.error("Error creating offer:", e);
+        try {
+            const offer = await pc.createOffer({});
+            await pc.setLocalDescription(offer);
+            console.log(`[Broadcaster] Sending offer to ${watcherId}`);
+            socketRef.current?.emit("offer", watcherId, pc.localDescription);
+        } catch (e) {
+            console.error(`[Broadcaster] Error creating offer for ${watcherId}:`, e);
+        }
+    };
+
+    // 2. Signaling and Peer Connections
+    useEffect(() => {
+        if (!cameraId) return;
+
+        console.log(`[Broadcaster] Initializing signaling for camera: ${cameraId}`);
+        socketRef.current = io(SIGNALING_URL);
+        socketRef.current.emit("broadcaster", cameraId);
+
+        socketRef.current.on("watcher", (id: string) => {
+            console.log(`[Broadcaster] Watcher joining: ${id}`);
+            if (localStreamRef.current) {
+                createPeerConnection(id, localStreamRef.current);
+            } else {
+                console.log("[Broadcaster] Stream not ready, queuing watcher");
+                awaitingWatchers.current.push(id);
             }
         });
 
         socketRef.current.on("answer", (id: string, description: RTCSessionDescription) => {
-            peerConnections.current[id]?.setRemoteDescription(description);
+            console.log(`[Broadcaster] Received answer from ${id}`);
+            peerConnections.current[id]?.setRemoteDescription(new RTCSessionDescription(description));
         });
 
         socketRef.current.on("candidate", (id: string, candidate: RTCIceCandidate) => {
+            console.log(`[Broadcaster] Received candidate from ${id}`);
             peerConnections.current[id]?.addIceCandidate(new RTCIceCandidate(candidate));
         });
 
         socketRef.current.on("disconnectPeer", (id: string) => {
+            console.log(`[Broadcaster] Peer disconnected: ${id}`);
             const pc = peerConnections.current[id];
             if (pc) {
                 pc.close();
@@ -132,24 +159,17 @@ export default function Broadcaster({ cameraId }: BroadcasterProps) {
             }
         });
 
-        // Cleanup
         return () => {
-            isMounted = false;
-            if (localStream) {
-                localStream.getTracks().forEach((t) => t.stop());
-                localStream.release();
-            }
-
-            // Close all peer connections
+            console.log("[Broadcaster] Cleaning up signaling...");
             Object.values(peerConnections.current).forEach((pc) => pc.close());
-
+            peerConnections.current = {};
             socketRef.current?.disconnect();
+            socketRef.current = null;
         };
-    }, [cameraId]); // Re-run if cameraId changes (reset webrtc)
+    }, [cameraId]); // Only restart if cameraId changes
 
     return (
         <View className="flex-1 bg-[#222]">
-            <Text className="text-white text-center p-2.5">Recording Mode</Text>
             {localStream && <RTCView streamURL={localStream.toURL()} style={{ flex: 1 }} mirror={false} objectFit="cover" />}
         </View>
     );

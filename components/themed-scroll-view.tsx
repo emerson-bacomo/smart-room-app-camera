@@ -5,7 +5,7 @@ import { ScrollView, type ScrollViewProps } from "react-native";
 export type ThemedScrollViewProps = ScrollViewProps;
 
 export function ThemedScrollView({ style, contentContainerStyle, ...otherProps }: ThemedScrollViewProps) {
-    const backgroundColor = useThemeColor("background", "backgroundColor");
+    const themedStyle = useThemeColor("backgroundColor");
 
-    return <ScrollView style={[backgroundColor, style]} contentContainerStyle={contentContainerStyle} {...otherProps} />;
+    return <ScrollView style={[themedStyle, style]} contentContainerStyle={contentContainerStyle} {...otherProps} />;
 }

@@ -1,3 +1,4 @@
+import { AppModal, AppModalRef } from "@/components/app-modal";
 import { Button } from "@/components/button";
 import { ThemedSafeAreaView } from "@/components/themed-safe-area-view";
 import { ThemedScrollView } from "@/components/themed-scroll-view";
@@ -6,15 +7,14 @@ import { ThemedTextInput } from "@/components/themed-text-input";
 import { ThemedView } from "@/components/themed-view";
 import { IconSymbol } from "@/components/ui/icon-symbol";
 import { useCamera } from "@/context/camera-context";
+import { useToast } from "@/context/toast-context";
 import api from "@/utilities/api";
-import React, { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, RefreshControl, TouchableOpacity, View } from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { ActivityIndicator, RefreshControl, TouchableOpacity, View } from "react-native";
 
 type CameraFormProps = {
     name: string;
     setName: (text: string) => void;
-    password: string;
-    setPassword: (text: string) => void;
     roomId: string;
     setRoomId: (text: string) => void;
     rooms: any[];
@@ -23,43 +23,16 @@ type CameraFormProps = {
     isEditing: boolean;
 };
 
-const CameraForm = ({
-    name,
-    setName,
-    password,
-    setPassword,
-    roomId,
-    setRoomId,
-    rooms,
-    handleSave,
-    saving,
-    isEditing,
-}: CameraFormProps) => {
+const CameraForm = ({ name, setName, roomId, setRoomId, rooms, handleSave, saving, isEditing }: CameraFormProps) => {
     return (
         <View className="gap-4">
             <View>
-                <ThemedText type="defaultSemiBold" className="mb-2">
-                    Camera Name
-                </ThemedText>
+                <ThemedText className="mb-2">Camera Name</ThemedText>
                 <ThemedTextInput value={name} onChangeText={setName} placeholder="e.g. Living Room" />
             </View>
 
             <View>
-                <ThemedText type="defaultSemiBold" className="mb-2">
-                    Camera Password
-                </ThemedText>
-                <ThemedTextInput
-                    value={password}
-                    onChangeText={setPassword}
-                    secureTextEntry
-                    placeholder={isEditing ? "Leave blank to keep current" : "Required"}
-                />
-            </View>
-
-            <View>
-                <ThemedText type="defaultSemiBold" className="mb-2">
-                    Assign to Room
-                </ThemedText>
+                <ThemedText className="mb-2">Assign to Room</ThemedText>
                 <View className="flex-row flex-wrap gap-2">
                     {rooms.map((room) => (
                         <TouchableOpacity
@@ -88,16 +61,28 @@ const CameraForm = ({
 
 export default function SetupScreen() {
     const { cameras, linkedCamera, deviceId, deviceName, refreshCameras, isLoading } = useCamera();
+    const toast = useToast();
     const [isAddCameraMode, setIsAddCameraMode] = useState(false);
     const [expandedId, setExpandedId] = useState<string | null>(null);
 
     // Form State
     const [name, setName] = useState("");
-    const [password, setPassword] = useState("");
+
     const [roomId, setRoomId] = useState("");
     const [rooms, setRooms] = useState<any[]>([]);
 
     const [saving, setSaving] = useState(false);
+
+    // Modal refs
+    const deleteModalRef = useRef<AppModalRef>(null);
+    const overwriteModalRef = useRef<AppModalRef>(null);
+
+    // State to hold pending actions for modals
+    const [pendingDelete, setPendingDelete] = useState<any>(null);
+    const [overwriteContext, setOverwriteContext] = useState<{
+        message: string;
+        onConfirm: () => Promise<void>;
+    } | null>(null);
 
     useEffect(() => {
         fetchRooms();
@@ -108,7 +93,7 @@ export default function SetupScreen() {
         if (isAddCameraMode) {
             setExpandedId(null);
             setName("");
-            setPassword("");
+
             setRoomId("");
         }
     }, [isAddCameraMode]);
@@ -120,7 +105,7 @@ export default function SetupScreen() {
             const cam = cameras.find((c) => c.id === expandedId);
             if (cam) {
                 setName(cam.name);
-                setPassword(""); // Leave blank unless changing
+
                 setRoomId(cam.roomId || "");
             }
         }
@@ -136,15 +121,14 @@ export default function SetupScreen() {
     };
 
     const handleAdd = async () => {
-        if (!name || (!password && isAddCameraMode)) {
-            Alert.alert("Error", "Please fill in all required fields");
+        if (!name) {
+            toast.error("Please fill in all required fields");
             return;
         }
 
         setSaving(true);
         try {
             const payload: any = { name, roomId: roomId || null };
-            if (password) payload.password = password;
 
             // Creating new
             const shouldLink = !linkedCamera;
@@ -155,44 +139,37 @@ export default function SetupScreen() {
             };
 
             await api.post("/cameras", createPayload);
-            Alert.alert("Success", "Camera created successfully");
+            toast.success("Camera created successfully");
             setIsAddCameraMode(false);
             await refreshCameras();
         } catch (error: any) {
             if (error.response?.status === 409 && error.response?.data?.code === "DEVICE_LINKED") {
                 // Handle Device Collision on Create
-                Alert.alert(
-                    "Device Already Linked",
-                    `This device is already linked to "${error.response.data.existingCameraName}". Do you want to overwrite it and link to this new camera?`,
-                    [
-                        { text: "Cancel", style: "cancel" },
-                        {
-                            text: "Overwrite",
-                            onPress: async () => {
-                                try {
-                                    const shouldLink = !linkedCamera;
-                                    const retryPayload = {
-                                        name,
-                                        roomId: roomId || null,
-                                        password,
-                                        deviceId: shouldLink ? deviceId : null,
-                                        deviceName: shouldLink ? deviceName : null,
-                                        overwrite: true,
-                                    };
+                setOverwriteContext({
+                    message: `This device is already linked to "${error.response.data.existingCameraName}". Do you want to overwrite it and link to this new camera?`,
+                    onConfirm: async () => {
+                        try {
+                            const shouldLink = !linkedCamera;
+                            const retryPayload = {
+                                name,
+                                roomId: roomId || null,
+                                deviceId: shouldLink ? deviceId : null,
+                                deviceName: shouldLink ? deviceName : null,
+                                overwrite: true,
+                            };
 
-                                    await api.post("/cameras", retryPayload);
-                                    Alert.alert("Success", "Camera created and device linked");
-                                    setIsAddCameraMode(false);
-                                    await refreshCameras();
-                                } catch (retryError: any) {
-                                    Alert.alert("Error", retryError.response?.data?.error || "Failed to create camera");
-                                }
-                            },
-                        },
-                    ],
-                );
+                            await api.post("/cameras", retryPayload);
+                            toast.success("Camera created and device linked");
+                            setIsAddCameraMode(false);
+                            await refreshCameras();
+                        } catch (retryError: any) {
+                            toast.error(retryError.response?.data?.error || "Failed to create camera");
+                        }
+                    },
+                });
+                overwriteModalRef.current?.open();
             } else {
-                Alert.alert("Error", error.response?.data?.error || "Failed to create camera");
+                toast.error(error.response?.data?.error || "Failed to create camera");
                 console.error("Create camera error:", error);
             }
         } finally {
@@ -206,14 +183,13 @@ export default function SetupScreen() {
         setSaving(true);
         try {
             const payload: any = { name, roomId };
-            if (password) payload.password = password;
 
             await api.put(`/cameras/${expandedId}`, payload);
-            Alert.alert("Success", "Camera settings updated");
+            toast.success("Camera settings updated");
             setExpandedId(null);
             await refreshCameras();
         } catch (error: any) {
-            Alert.alert("Error", error.response?.data?.error || "Failed to update camera");
+            toast.error(error.response?.data?.error || "Failed to update camera");
             console.error("Update camera error:", error);
         } finally {
             setSaving(false);
@@ -227,36 +203,30 @@ export default function SetupScreen() {
                 deviceId,
                 deviceName,
             });
-            Alert.alert("Success", "Device linked to camera");
+            toast.success("Device linked to camera");
             await refreshCameras();
         } catch (error: any) {
             if (error.response?.status === 409 && error.response?.data?.code === "DEVICE_LINKED") {
-                Alert.alert(
-                    "Device Already Linked",
-                    `This device is already linked to "${error.response.data.existingCameraName}". Do you want to overwrite it?`,
-                    [
-                        { text: "Cancel", style: "cancel" },
-                        {
-                            text: "Overwrite",
-                            onPress: async () => {
-                                try {
-                                    await api.post("/cameras/link-device", {
-                                        cameraId: cam.id,
-                                        deviceId,
-                                        deviceName,
-                                        overwrite: true,
-                                    });
-                                    Alert.alert("Success", "Device linked to new camera");
-                                    await refreshCameras();
-                                } catch (retryError: any) {
-                                    Alert.alert("Error", retryError.response?.data?.error || "Failed to link");
-                                }
-                            },
-                        },
-                    ],
-                );
+                setOverwriteContext({
+                    message: `This device is already linked to "${error.response.data.existingCameraName}". Do you want to overwrite it?`,
+                    onConfirm: async () => {
+                        try {
+                            await api.post("/cameras/link-device", {
+                                cameraId: cam.id,
+                                deviceId,
+                                deviceName,
+                                overwrite: true,
+                            });
+                            toast.success("Device linked to new camera");
+                            await refreshCameras();
+                        } catch (retryError: any) {
+                            toast.error(retryError.response?.data?.error || "Failed to link");
+                        }
+                    },
+                });
+                overwriteModalRef.current?.open();
             } else {
-                Alert.alert("Error", error.response?.data?.error || "Failed to link");
+                toast.error(error.response?.data?.error || "Failed to link");
             }
         }
     };
@@ -264,30 +234,36 @@ export default function SetupScreen() {
     const handleUnlink = async (cam: any) => {
         try {
             await api.post("/cameras/unlink-device", { cameraId: cam.id });
-            Alert.alert("Success", "Device unlinked");
+            toast.success("Device unlinked");
             await refreshCameras();
         } catch (error: any) {
-            Alert.alert("Error", error.response?.data?.error || "Failed to unlink");
+            toast.error(error.response?.data?.error || "Failed to unlink");
         }
     };
 
-    const handleDelete = async (cam: any) => {
-        Alert.alert("Delete Camera", "Are you sure?", [
-            { text: "Cancel", style: "cancel" },
-            {
-                text: "Delete",
-                style: "destructive",
-                onPress: async () => {
-                    try {
-                        await api.delete(`/cameras/${cam.id}`);
-                        await refreshCameras();
-                    } catch (error) {
-                        Alert.alert("Error", "Failed to delete");
-                    }
-                },
-            },
-        ]);
+    const handleDelete = (cam: any) => {
+        setPendingDelete(cam);
+        deleteModalRef.current?.open();
     };
+
+    const confirmDelete = async () => {
+        if (!pendingDelete) return;
+        try {
+            await api.delete(`/cameras/${pendingDelete.id}`);
+            await refreshCameras();
+        } catch (error) {
+            toast.error("Failed to delete");
+        } finally {
+            setPendingDelete(null);
+        }
+    };
+
+    // Sort cameras so the linked camera appears first
+    const sortedCameras = [...cameras].sort((a, b) => {
+        const aLinked = a.deviceId === deviceId ? -1 : 0;
+        const bLinked = b.deviceId === deviceId ? -1 : 0;
+        return aLinked - bLinked;
+    });
 
     if (isLoading) {
         return (
@@ -326,8 +302,6 @@ export default function SetupScreen() {
                         <CameraForm
                             name={name}
                             setName={setName}
-                            password={password}
-                            setPassword={setPassword}
                             roomId={roomId}
                             setRoomId={setRoomId}
                             rooms={rooms}
@@ -340,7 +314,7 @@ export default function SetupScreen() {
 
                 {/* --- CAMERA LIST --- */}
                 <View className="gap-3">
-                    {cameras.map((cam) => {
+                    {sortedCameras.map((cam) => {
                         const isLinked = cam.deviceId === deviceId;
                         const isExpanded = expandedId === cam.id;
 
@@ -354,9 +328,6 @@ export default function SetupScreen() {
                                     className="flex-row items-center justify-between p-4"
                                 >
                                     <View className="flex-row items-center gap-3">
-                                        <View
-                                            className={`h-2 w-2 rounded-full ${cam.isOnline ? "bg-green-500" : "bg-gray-300"}`}
-                                        />
                                         <View>
                                             <ThemedText
                                                 type="defaultSemiBold"
@@ -377,33 +348,33 @@ export default function SetupScreen() {
                                         {/* Actions Bar */}
                                         <View className="flex-row justify-end gap-2 mb-4">
                                             {!isLinked ? (
-                                                <TouchableOpacity
-                                                    onPress={() => handleLink(cam)}
-                                                    className="flex-row items-center gap-2 rounded-lg bg-blue-500 px-3 py-2"
-                                                >
-                                                    <IconSymbol name="link" size={16} color="white" />
-                                                    <ThemedText className="text-white font-medium text-xs">
-                                                        Link to this device
-                                                    </ThemedText>
-                                                </TouchableOpacity>
+                                                <Button
+                                                    label="Link"
+                                                    variant="none"
+                                                    className="border border-blue-600"
+                                                    labelClassName="text-blue-200"
+                                                    icon={<IconSymbol name="link" size={16} color="#78b9ffff" />}
+                                                    onclick={() => handleLink(cam)}
+                                                />
                                             ) : (
-                                                <TouchableOpacity
-                                                    onPress={() => handleUnlink(cam)}
-                                                    className="flex-row items-center gap-2 rounded-lg bg-orange-100 px-3 py-2"
-                                                >
-                                                    <IconSymbol name="link-off" size={16} color="orange" />
-                                                    <ThemedText className="text-orange-700 font-medium text-xs">
-                                                        Unlink
-                                                    </ThemedText>
-                                                </TouchableOpacity>
+                                                <Button
+                                                    label="Unlink"
+                                                    variant="none"
+                                                    className="border border-orange-600"
+                                                    labelClassName="text-orange-200"
+                                                    icon={<IconSymbol name="link-off" size={16} color="#e7824bff" />}
+                                                    onclick={() => handleUnlink(cam)}
+                                                />
                                             )}
 
-                                            <TouchableOpacity
-                                                onPress={() => handleDelete(cam)}
-                                                className="rounded-lg light:bg-red-100 dark:bg-red-900 px-3 py-2"
-                                            >
-                                                <IconSymbol name="delete" size={16} color="red" />
-                                            </TouchableOpacity>
+                                            <Button
+                                                label="Delete"
+                                                variant="none"
+                                                className="border border-red-700"
+                                                labelClassName="text-red-200"
+                                                icon={<IconSymbol name="delete" size={18} color="#ff5c5cff" />}
+                                                onclick={() => handleDelete(cam)}
+                                            />
                                         </View>
 
                                         <ThemedText type="defaultSemiBold" className="mb-4 text-gray-500">
@@ -412,8 +383,6 @@ export default function SetupScreen() {
                                         <CameraForm
                                             name={name}
                                             setName={setName}
-                                            password={password}
-                                            setPassword={setPassword}
                                             roomId={roomId}
                                             setRoomId={setRoomId}
                                             rooms={rooms}
@@ -428,6 +397,38 @@ export default function SetupScreen() {
                     })}
                 </View>
             </ThemedScrollView>
+
+            {/* Delete Confirmation Modal */}
+            <AppModal
+                ref={deleteModalRef}
+                title="Delete Camera"
+                footerType={["CANCEL", "DELETE"]}
+                onSubmitOverride={async (setLoading) => {
+                    setLoading(true);
+                    await confirmDelete();
+                    setLoading(false);
+                    deleteModalRef.current?.close();
+                }}
+            >
+                <ThemedText className="mb-4 text-center">Are you sure you want to delete this camera?</ThemedText>
+            </AppModal>
+
+            {/* Overwrite Confirmation Modal */}
+            <AppModal
+                ref={overwriteModalRef}
+                title="Device Already Linked"
+                submitLabel="Overwrite"
+                footerType={["CANCEL", "CONFIRM"]}
+                onSubmitOverride={async (setLoading) => {
+                    if (!overwriteContext) return;
+                    setLoading(true);
+                    await overwriteContext.onConfirm();
+                    setLoading(false);
+                    overwriteModalRef.current?.close();
+                }}
+            >
+                <ThemedText className="mb-4">{overwriteContext?.message}</ThemedText>
+            </AppModal>
         </ThemedSafeAreaView>
     );
 }

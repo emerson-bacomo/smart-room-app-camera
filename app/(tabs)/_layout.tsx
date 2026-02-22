@@ -5,6 +5,7 @@ import { IconSymbol } from "@/components/ui/icon-symbol";
 import { Colors } from "@/constants/theme";
 import { useAuth } from "@/hooks/use-auth";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import FontAwesome6 from "@expo/vector-icons/FontAwesome6";
 import MaterialIcons from "@expo/vector-icons/MaterialIcons";
 import { Image } from "react-native";
 
@@ -30,14 +31,14 @@ export default function TabLayout() {
                 name="index"
                 options={{
                     title: "Camera",
-                    tabBarIcon: ({ color }) => <IconSymbol size={28} name="video.fill" color={color} />,
+                    tabBarIcon: ({ color }) => <IconSymbol size={24} name="video" library={FontAwesome6} color={color} />,
                 }}
             />
             <Tabs.Screen
                 name="setup"
                 options={{
                     title: "Setup",
-                    tabBarIcon: ({ color }) => <IconSymbol size={28} name="gearshape.fill" color={color} />,
+                    tabBarIcon: ({ color }) => <IconSymbol size={22} name="gear" library={FontAwesome6} color={color} />,
                 }}
             />
             <Tabs.Screen
@@ -48,7 +49,7 @@ export default function TabLayout() {
                         user?.avatar ? (
                             <Image source={{ uri: user.avatar }} style={{ width: 28, height: 28, borderRadius: 14 }} />
                         ) : (
-                            <IconSymbol library={MaterialIcons} size={28} name="person" color={color} />
+                            <IconSymbol library={MaterialIcons} size={24} name="person" color={color} />
                         ),
                 }}
             />

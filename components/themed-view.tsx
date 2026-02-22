@@ -3,10 +3,17 @@ import { View, type ViewProps } from "react-native";
 import { useThemeColor } from "@/hooks/use-theme-color";
 import React from "react";
 
-export type ThemedViewProps = ViewProps;
+export type ThemedViewProps = ViewProps & {
+    bordered?: boolean;
+    opposite?: boolean;
+};
 
-export function ThemedView({ style, ...otherProps }: ThemedViewProps) {
-    const themedStyle = useThemeColor("background", "backgroundColor");
+export function ThemedView({ style, bordered, opposite, ...otherProps }: ThemedViewProps) {
+    const { backgroundColor, textInputBorder: borderColor } = useThemeColor(
+        ["backgroundColor", "textInputBorder"],
+        undefined,
+        opposite,
+    );
 
-    return <View style={[themedStyle, style]} {...otherProps} />;
+    return <View style={[{ backgroundColor }, bordered && { borderColor, borderWidth: 1 }, style]} {...otherProps} />;
 }

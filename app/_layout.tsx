@@ -8,6 +8,7 @@ import "../global.css";
 import { AuthProvider } from "@/context/auth-context";
 import { CameraProvider } from "@/context/camera-context";
 import { ThemeProvider as AppThemeProvider } from "@/context/theme-context";
+import { ToastProvider } from "@/context/toast-context";
 import { useAuth } from "@/hooks/use-auth";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import React from "react";
@@ -16,7 +17,9 @@ export default function RootLayout() {
     return (
         <AppThemeProvider>
             <AuthProvider>
-                <RootLayoutContent />
+                <ToastProvider>
+                    <RootLayoutContent />
+                </ToastProvider>
             </AuthProvider>
         </AppThemeProvider>
     );

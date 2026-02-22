@@ -2,8 +2,8 @@ import { Button, ButtonProps } from "@/components/button";
 import { ThemedSafeAreaView } from "@/components/themed-safe-area-view";
 import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
+import { useToast } from "@/context/toast-context";
 import { useAuth } from "@/hooks/use-auth";
-import { alertAsync } from "@/utilities/alert-utils";
 import api from "@/utilities/api";
 import { GoogleSignin as GoogleNative } from "@react-native-google-signin/google-signin";
 import * as GoogleBrowser from "expo-auth-session/providers/google"; // Renamed for clarity
@@ -21,6 +21,7 @@ const ANDROID_CLIENT_ID = "733891402411-cqerorbpkrtjmrtiqve9bf4u3vlp7sbp.apps.go
 
 export default function Login() {
     WebBrowser.maybeCompleteAuthSession();
+    const toast = useToast();
 
     // 1. Browser Flow Setup
     const [request, response, promptAsync] = GoogleBrowser.useAuthRequest({
@@ -85,7 +86,7 @@ export default function Login() {
             console.log("Logged in user:", user);
         } catch (error) {
             console.error("Backend Error:", error);
-            alertAsync("Login Failed", "Could not verify with server.");
+            toast.error("Could not verify with server.");
         }
     };
 

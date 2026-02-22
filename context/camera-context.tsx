@@ -8,7 +8,6 @@ interface Camera {
     id: string;
     name: string;
     roomId?: string;
-    isOnline: boolean;
     deviceId?: string;
     deviceName?: string;
 }
