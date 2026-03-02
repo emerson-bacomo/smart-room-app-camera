@@ -1,5 +1,6 @@
+import notifee, { AndroidColor, AndroidForegroundServiceType, AndroidImportance } from "@notifee/react-native";
 import React, { useEffect, useRef, useState } from "react";
-import { PermissionsAndroid, Platform, View } from "react-native";
+import { AppState, PermissionsAndroid, Platform, View } from "react-native";
 import {
     mediaDevices,
     MediaStream,
@@ -11,11 +12,18 @@ import {
 import { io, Socket } from "socket.io-client";
 import { peerConstraints, SIGNALING_URL } from "../web-rtc.config";
 
-interface BroadcasterProps {
-    cameraId: string;
+export interface Viewer {
+    id: string; // Socket ID
+    name?: string;
+    avatar?: string;
 }
 
-export default function Broadcaster({ cameraId }: BroadcasterProps) {
+interface BroadcasterProps {
+    cameraId: string;
+    onViewersChange?: (viewers: Viewer[]) => void;
+}
+
+export default function Broadcaster({ cameraId, onViewersChange }: BroadcasterProps) {
     const [localStream, setLocalStream] = useState<MediaStream | null>(null);
 
     // Use a Ref to hold the socket instance
@@ -24,6 +32,47 @@ export default function Broadcaster({ cameraId }: BroadcasterProps) {
     const awaitingWatchers = useRef<string[]>([]);
     const localStreamRef = useRef<MediaStream | null>(null);
     const peerConnections = useRef<Record<string, RTCPeerConnection>>({});
+    const viewersRef = useRef<Viewer[]>([]);
+
+    const startForegroundService = async () => {
+        if (Platform.OS !== "android") return;
+
+        try {
+            // Create a channel (required for Android)
+            const channelId = await notifee.createChannel({
+                id: "broadcaster-service",
+                name: "Camera Broadcaster Service",
+                lights: false,
+                vibration: false,
+                importance: AndroidImportance.DEFAULT,
+            });
+
+            // Display a notification
+            await notifee.displayNotification({
+                title: "Broadcasting Active",
+                body: "Camera is streaming in the background",
+                android: {
+                    channelId,
+                    color: AndroidColor.RED,
+                    ongoing: true,
+                    asForegroundService: true,
+                    foregroundServiceTypes: [AndroidForegroundServiceType.FOREGROUND_SERVICE_TYPE_CAMERA],
+                    pressAction: {
+                        id: "default",
+                    },
+                },
+            });
+            console.log("[Broadcaster] Foreground service started");
+        } catch (err) {
+            console.error("[Broadcaster] Failed to start foreground service:", err);
+        }
+    };
+
+    const stopForegroundService = async () => {
+        if (Platform.OS !== "android") return;
+        await notifee.stopForegroundService();
+        console.log("[Broadcaster] Foreground service stopped");
+    };
 
     // 1. Initialize Camera Stream
     useEffect(() => {
@@ -35,6 +84,7 @@ export default function Broadcaster({ cameraId }: BroadcasterProps) {
                     const granted = await PermissionsAndroid.requestMultiple([
                         PermissionsAndroid.PERMISSIONS.CAMERA,
                         PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+                        PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
                     ]);
                     return (
                         granted["android.permission.CAMERA"] === PermissionsAndroid.RESULTS.GRANTED &&
@@ -72,6 +122,9 @@ export default function Broadcaster({ cameraId }: BroadcasterProps) {
                     // Process any awaiting watchers
                     awaitingWatchers.current.forEach((id) => createPeerConnection(id, stream));
                     awaitingWatchers.current = [];
+
+                    // Start background service
+                    startForegroundService();
                 } else {
                     stream.getTracks().forEach((t) => t.stop());
                 }
@@ -82,8 +135,14 @@ export default function Broadcaster({ cameraId }: BroadcasterProps) {
 
         startStream();
 
+        const subscription = AppState.addEventListener("change", (nextAppState) => {
+            console.log(`[Broadcaster] AppState changed to: ${nextAppState}`);
+        });
+
         return () => {
             isMounted = false;
+            subscription.remove();
+            stopForegroundService();
             if (localStreamRef.current) {
                 localStreamRef.current.getTracks().forEach((t) => t.stop());
                 localStreamRef.current = null;
@@ -130,8 +189,19 @@ export default function Broadcaster({ cameraId }: BroadcasterProps) {
         socketRef.current = io(SIGNALING_URL);
         socketRef.current.emit("broadcaster", cameraId);
 
-        socketRef.current.on("watcher", (id: string) => {
-            console.log(`[Broadcaster] Watcher joining: ${id}`);
+        socketRef.current.on("watcher", (id: string, user?: { id: string; name?: string; avatar?: string }) => {
+            console.log(`[Broadcaster] Watcher joining: ${id}`, user);
+
+            if (!viewersRef.current.some((v) => v.id === id)) {
+                const viewer: Viewer = {
+                    id,
+                    name: user?.name,
+                    avatar: user?.avatar,
+                };
+                viewersRef.current.push(viewer);
+                onViewersChange?.([...viewersRef.current]);
+            }
+
             if (localStreamRef.current) {
                 createPeerConnection(id, localStreamRef.current);
             } else {
@@ -152,6 +222,9 @@ export default function Broadcaster({ cameraId }: BroadcasterProps) {
 
         socketRef.current.on("disconnectPeer", (id: string) => {
             console.log(`[Broadcaster] Peer disconnected: ${id}`);
+            viewersRef.current = viewersRef.current.filter((v) => v.id !== id);
+            onViewersChange?.([...viewersRef.current]);
+
             const pc = peerConnections.current[id];
             if (pc) {
                 pc.close();
@@ -161,6 +234,8 @@ export default function Broadcaster({ cameraId }: BroadcasterProps) {
 
         return () => {
             console.log("[Broadcaster] Cleaning up signaling...");
+            viewersRef.current = [];
+            onViewersChange?.([]);
             Object.values(peerConnections.current).forEach((pc) => pc.close());
             peerConnections.current = {};
             socketRef.current?.disconnect();
