@@ -40,7 +40,7 @@ export default function ProfileScreen() {
                         label="Settings"
                         variant="outline"
                         onclick={() => router.push("/settings")}
-                        labelClassName="font-bold"
+                        labelClassName="font-bold text-black dark:text-white"
                     />
 
                     <Button label="Logout" variant="danger" onclick={handleLogout} labelClassName="text-white font-bold" />

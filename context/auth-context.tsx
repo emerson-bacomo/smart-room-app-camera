@@ -1,6 +1,8 @@
 import api from "@/utilities/api";
+import { GoogleSignin } from "@react-native-google-signin/google-signin";
 import * as SecureStore from "expo-secure-store";
 import React, { createContext, useContext, useEffect, useState } from "react";
+import { Platform } from "react-native";
 
 export interface User {
     id: string;
@@ -23,6 +25,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [loading, setLoading] = useState(true);
 
     const logout = async () => {
+        try {
+            if (Platform.OS !== "web") {
+                // Ensure we follow the user's request to always show account list
+                // revokeAccess() clears the permission and forced individual to pick account again
+                await GoogleSignin.revokeAccess();
+                await GoogleSignin.signOut();
+            }
+        } catch (error) {
+            console.error("Google Sign-Out Error:", error);
+        }
+
         await SecureStore.deleteItemAsync("accessToken");
         await SecureStore.deleteItemAsync("refreshToken");
         setUser(null);
